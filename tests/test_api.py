@@ -116,3 +116,135 @@ class TestDatesEndpoint:
             params={"origin": "JFK", "destination": "LHR", "from": "2026-11-01", "to": "2026-10-01"},
         )
         assert res.status_code == 422
+
+
+class TestDealEndpoints:
+    """The agent-facing wide-search API."""
+
+    def deal_payload(self, **overrides) -> dict:
+        body = {
+            "origins": ["SIN"],
+            "destination_region": "US",
+            "depart_from": "2026-12-01",
+            "depart_to": "2026-12-31",
+            "return_from": "2027-01-01",
+            "return_to": "2027-01-31",
+            "min_trip_days": 30,
+            "max_trip_days": 30,
+            "cabin_class": "BUSINESS",
+            "airlines": ["SQ"],
+        }
+        body.update(overrides)
+        return body
+
+    def test_plan_costs_a_search_without_running_it(self):
+        res = client.post("/api/deals/plan", json=self.deal_payload())
+        assert res.status_code == 200
+        body = res.json()
+        assert body["estimated_requests"] == 22
+        assert body["scan_requests"] == 12
+        assert body["departure_windows"][0]["from"] == "2026-12-02"
+
+    def test_regions_are_discoverable(self):
+        res = client.get("/api/regions")
+        assert res.status_code == 200
+        assert "US" in res.json()
+
+    def test_unknown_region_lists_valid_ones(self):
+        res = client.post("/api/deals/plan", json=self.deal_payload(destination_region="MARS"))
+        assert res.status_code == 422
+        assert res.json()["error"] == "unknown_region"
+
+    def test_impossible_dates_are_rejected_with_a_reason(self):
+        res = client.post(
+            "/api/deals/plan", json=self.deal_payload(min_trip_days=90, max_trip_days=90)
+        )
+        assert res.status_code == 422
+        assert res.json()["error"] == "invalid_plan"
+        assert "no departure date" in res.json()["detail"]
+
+    def test_missing_job_is_404(self):
+        assert client.get("/api/deals/nope").status_code == 404
+
+
+class TestDealJobLifecycle:
+    """Submit -> poll -> result, the path an agent actually walks."""
+
+    def test_job_runs_to_completion(self, monkeypatch):
+        import time
+
+        from test_engine import FakeProvider
+
+        from app import main
+
+        monkeypatch.setattr(
+            main, "provider", FakeProvider({"LAX": 4200.0, "SFO": 5000.0, "JFK": 6000.0})
+        )
+
+        res = client.post(
+            "/api/deals",
+            json={
+                "origins": ["SIN"],
+                "destinations": ["LAX", "SFO", "JFK"],
+                "depart_from": "2026-12-01",
+                "depart_to": "2026-12-10",
+                "min_trip_days": 30,
+                "max_trip_days": 30,
+                "cabin_class": "BUSINESS",
+                "refine_top_n": 2,
+            },
+        )
+        assert res.status_code == 202
+        job = res.json()
+        # A fast provider can finish before the POST returns, so "complete"
+        # is a legitimate first observation.
+        assert job["status"] in ("queued", "running", "complete")
+        assert job["estimated_requests"] == 5
+
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            job = client.get(f"/api/deals/{job['id']}").json()
+            if job["status"] in ("complete", "failed"):
+                break
+            time.sleep(0.05)
+
+        assert job["status"] == "complete", job.get("error")
+        result = job["result"]
+        assert result["best"]["destination"] == "LAX"
+        assert result["best"]["grid_price"] == 4200.0
+        assert result["stats"]["requests_made"] == 5
+        assert len(result["deals"]) == 2
+
+    def test_job_appears_in_the_listing(self, monkeypatch):
+        from test_engine import FakeProvider
+
+        from app import main
+
+        monkeypatch.setattr(main, "provider", FakeProvider())
+        created = client.post(
+            "/api/deals",
+            json={
+                "origins": ["SIN"],
+                "destinations": ["LAX"],
+                "depart_from": "2026-12-01",
+                "depart_to": "2026-12-05",
+            },
+        ).json()
+        assert created["id"] in [j["id"] for j in client.get("/api/deals").json()]
+
+    def test_unsatisfiable_search_fails_fast_without_a_job(self):
+        res = client.post(
+            "/api/deals",
+            json={
+                "origins": ["SIN"],
+                "destinations": ["LAX"],
+                "depart_from": "2026-12-01",
+                "depart_to": "2026-12-31",
+                "return_from": "2027-01-01",
+                "return_to": "2027-01-31",
+                "min_trip_days": 90,
+                "max_trip_days": 90,
+            },
+        )
+        assert res.status_code == 422
+        assert res.json()["error"] == "invalid_plan"

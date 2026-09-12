@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date
 from pathlib import Path
 
@@ -11,6 +12,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
+from app.deals.jobs import Job, store
+from app.deals.planner import PlanError, plan_search
+from app.deals.regions import UnknownRegionError, known_regions
+from app.deals.schemas import DealSearchRequest
+from app.providers.fli_provider import FliProvider, configure_rate_limit
 from app.schemas import (
     AirportOut,
     DateSearchResponse,
@@ -29,11 +35,35 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# `fli` defaults to 10 req/sec against a private Google endpoint. Slow it
+# down before the first search; see app/providers/fli_provider.py.
+configure_rate_limit(int(os.environ.get("FLI_CALLS_PER_SECOND", "1")))
+
+provider = FliProvider()
+
 app = FastAPI(
     title="Flight Search",
     version=__version__,
     description="Flight search backed by the `fli` Google Flights library.",
 )
+
+
+@app.exception_handler(PlanError)
+async def _plan_error_handler(_request, exc: PlanError) -> JSONResponse:
+    """An unsatisfiable search is the caller's to fix, so say exactly why."""
+    return JSONResponse(
+        status_code=422,
+        content=ErrorOut(error="invalid_plan", detail=str(exc)).model_dump(),
+    )
+
+
+@app.exception_handler(UnknownRegionError)
+async def _region_error_handler(_request, exc: UnknownRegionError) -> JSONResponse:
+    """Unknown region names list the valid ones so an agent can retry."""
+    return JSONResponse(
+        status_code=422,
+        content=ErrorOut(error="unknown_region", detail=str(exc)).model_dump(),
+    )
 
 
 @app.exception_handler(SearchError)
@@ -95,6 +125,55 @@ def cheapest_dates(
         currency=currency,
         trip_duration=trip_duration,
     )
+
+
+@app.get("/api/regions", response_model=list[str])
+def regions() -> list[str]:
+    """Region names accepted by `destination_region`."""
+    return known_regions()
+
+
+@app.post("/api/deals/plan", response_model=dict)
+def plan_deals(request: DealSearchRequest) -> dict:
+    """Cost a wide search without running it.
+
+    Lets an agent (or a person) see the request budget and the narrowed date
+    window before spending anything upstream.
+    """
+    plan = plan_search(request)
+    return {
+        "estimated_requests": plan.estimated_requests,
+        "scan_requests": plan.scan_requests,
+        "refine_requests": plan.refine_top_n,
+        "destinations": list(plan.destinations),
+        "trip_lengths": list(plan.durations),
+        "departure_windows": [
+            {"from": s.depart_from.isoformat(), "to": s.depart_to.isoformat()}
+            for s in plan.scans[: len(plan.durations)]
+        ],
+        "notes": list(plan.notes),
+    }
+
+
+@app.post("/api/deals", response_model=Job, status_code=202)
+def start_deal_search(request: DealSearchRequest) -> Job:
+    """Start a wide fare search. Returns a job to poll — searches take minutes."""
+    return store.submit(request, provider)
+
+
+@app.get("/api/deals/{job_id}", response_model=Job)
+def get_deal_search(job_id: str) -> Job:
+    """Poll a wide search: progress while running, full results when complete."""
+    job = store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"no job {job_id!r}")
+    return job
+
+
+@app.get("/api/deals", response_model=list[Job])
+def list_deal_searches(limit: int = Query(default=20, ge=1, le=100)) -> list[Job]:
+    """Recent wide searches, newest first."""
+    return store.list(limit=limit)
 
 
 @app.get("/", include_in_schema=False)

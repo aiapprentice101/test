@@ -293,8 +293,8 @@ def search_flights(request: SearchRequest, searcher: SearchFlights | None = None
 
 
 def search_cheapest_dates(
-    origin: str,
-    destination: str,
+    origin: str | list[str],
+    destination: str | list[str],
     from_date: date,
     to_date: date,
     *,
@@ -302,33 +302,49 @@ def search_cheapest_dates(
     max_stops: str = "ANY",
     currency: str = "USD",
     trip_duration: int | None = None,
+    airlines: list[str] | None = None,
+    adults: int = 1,
     searcher: SearchDates | None = None,
 ) -> DateSearchResponse:
-    """Find the cheapest departure dates across a range."""
-    origin, destination, currency = origin.upper(), destination.upper(), currency.upper()
+    """Find the cheapest departure dates across a range.
+
+    One request covers the whole range (`fli` splits ranges over 61 days into
+    parallel chunks). `origin` and `destination` accept a list to scan several
+    airports at once, which returns the cheapest across them without saying
+    which one — pass a single code when you need to know.
+    """
+    origin_codes = [origin] if isinstance(origin, str) else list(origin)
+    destination_codes = [destination] if isinstance(destination, str) else list(destination)
+    origin_codes = [c.upper() for c in origin_codes]
+    destination_codes = [c.upper() for c in destination_codes]
+    currency = currency.upper()
     is_round_trip = trip_duration is not None
 
     try:
-        origin_airport = resolve_airport(origin)
-        destination_airport = resolve_airport(destination)
+        origin_airports = [resolve_airport(c) for c in origin_codes]
+        destination_airports = [resolve_airport(c) for c in destination_codes]
+        parsed_airlines = parse_airlines([a.upper() for a in airlines]) if airlines else None
     except ParseError as exc:
         raise SearchError(str(exc), status_code=422) from exc
 
     segments, trip_type = build_date_search_segments(
-        origin=origin_airport,
-        destination=destination_airport,
+        origin=origin_airports if len(origin_airports) > 1 else origin_airports[0],
+        destination=(
+            destination_airports if len(destination_airports) > 1 else destination_airports[0]
+        ),
         start_date=from_date.isoformat(),
         trip_duration=trip_duration,
         is_round_trip=is_round_trip,
     )
     filters = DateSearchFilters(
         trip_type=trip_type,
-        passenger_info=PassengerInfo(adults=1),
+        passenger_info=PassengerInfo(adults=adults),
         flight_segments=segments,
         from_date=from_date.isoformat(),
         to_date=to_date.isoformat(),
         seat_type=parse_cabin_class(cabin_class),
         stops=parse_max_stops(max_stops),
+        airlines=parsed_airlines,
         duration=trip_duration,
     )
 
@@ -359,8 +375,8 @@ def search_cheapest_dates(
     prices.sort(key=lambda p: p.departure_date)
 
     return DateSearchResponse(
-        origin=origin,
-        destination=destination,
+        origin=",".join(origin_codes),
+        destination=",".join(destination_codes),
         count=len(prices),
         cheapest=min(prices, key=lambda p: p.price) if prices else None,
         elapsed_seconds=round(elapsed, 2),
