@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flight Search</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%88%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>✈︎ Flight Search</h1>
+    <p class="tagline">Live Google Flights data via the <code>fli</code> library</p>
+  </header>
+
+  <main>
+    <form id="search-form" class="card search-card" autocomplete="off">
+      <div class="trip-toggle" role="radiogroup" aria-label="Trip type">
+        <label><input type="radio" name="trip" value="one_way" checked> One way</label>
+        <label><input type="radio" name="trip" value="round_trip"> Round trip</label>
+      </div>
+
+      <div class="row">
+        <div class="field autocomplete">
+          <label for="origin">From</label>
+          <input id="origin" name="origin" placeholder="City or airport" required
+                 aria-autocomplete="list" aria-expanded="false" role="combobox">
+          <ul class="suggestions" id="origin-suggestions" role="listbox" hidden></ul>
+        </div>
+
+        <button type="button" id="swap" class="swap" title="Swap airports" aria-label="Swap origin and destination">⇄</button>
+
+        <div class="field autocomplete">
+          <label for="destination">To</label>
+          <input id="destination" name="destination" placeholder="City or airport" required
+                 aria-autocomplete="list" aria-expanded="false" role="combobox">
+          <ul class="suggestions" id="destination-suggestions" role="listbox" hidden></ul>
+        </div>
+
+        <div class="field">
+          <label for="departure_date">Depart</label>
+          <input id="departure_date" name="departure_date" type="date" required>
+        </div>
+
+        <div class="field" id="return-field" hidden>
+          <label for="return_date">Return</label>
+          <input id="return_date" name="return_date" type="date">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field small">
+          <label for="adults">Adults</label>
+          <input id="adults" type="number" min="1" max="9" value="1">
+        </div>
+        <div class="field small">
+          <label for="children">Children</label>
+          <input id="children" type="number" min="0" max="8" value="0">
+        </div>
+        <div class="field">
+          <label for="cabin_class">Cabin</label>
+          <select id="cabin_class">
+            <option value="ECONOMY">Economy</option>
+            <option value="PREMIUM_ECONOMY">Premium economy</option>
+            <option value="BUSINESS">Business</option>
+            <option value="FIRST">First</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="max_stops">Stops</label>
+          <select id="max_stops">
+            <option value="ANY">Any</option>
+            <option value="NON_STOP">Non-stop only</option>
+            <option value="ONE_STOP_OR_FEWER">1 stop or fewer</option>
+            <option value="TWO_OR_FEWER_STOPS">2 stops or fewer</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sort_by">Sort by</label>
+          <select id="sort_by">
+            <option value="CHEAPEST">Cheapest</option>
+            <option value="BEST">Best</option>
+            <option value="DURATION">Duration</option>
+            <option value="DEPARTURE_TIME">Departure time</option>
+            <option value="ARRIVAL_TIME">Arrival time</option>
+            <option value="EMISSIONS">Emissions</option>
+          </select>
+        </div>
+        <div class="field small">
+          <label for="currency">Currency</label>
+          <input id="currency" value="USD" maxlength="3" size="3">
+        </div>
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced filters</summary>
+        <div class="row">
+          <div class="field">
+            <label for="departure_window">Departure window (HH-HH)</label>
+            <input id="departure_window" placeholder="6-20" pattern="\d{1,2}-\d{1,2}">
+          </div>
+          <div class="field">
+            <label for="airlines">Only these airlines</label>
+            <input id="airlines" placeholder="BA, AA">
+          </div>
+          <div class="field">
+            <label for="exclude_airlines">Exclude airlines</label>
+            <input id="exclude_airlines" placeholder="NK, F9">
+          </div>
+        </div>
+      </details>
+
+      <button type="submit" class="primary" id="submit">Search flights</button>
+    </form>
+
+    <section id="status" class="status" hidden></section>
+    <section id="summary" class="summary" hidden></section>
+    <section id="results" class="results"></section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

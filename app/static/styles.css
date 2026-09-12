@@ -1,0 +1,189 @@
+:root {
+  --bg: #f4f6fb;
+  --surface: #ffffff;
+  --border: #dfe3ec;
+  --text: #16202f;
+  --muted: #66748c;
+  --accent: #1b56d6;
+  --accent-soft: #e8efff;
+  --good: #0f7b52;
+  --radius: 12px;
+}
+
+* { box-sizing: border-box; }
+
+/* Author `display` rules below outrank the UA sheet's [hidden] rule. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.topbar {
+  background: linear-gradient(135deg, #17306b, #1b56d6);
+  color: #fff;
+  padding: 28px 24px;
+}
+.topbar h1 { margin: 0; font-size: 24px; letter-spacing: -0.01em; }
+.tagline { margin: 6px 0 0; opacity: 0.85; font-size: 14px; }
+.tagline code { background: rgba(255,255,255,0.18); padding: 1px 5px; border-radius: 4px; }
+
+main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 64px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(16, 32, 64, 0.06);
+}
+
+.row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; margin-bottom: 14px; }
+.field { display: flex; flex-direction: column; flex: 1 1 170px; min-width: 0; position: relative; }
+.field.small { flex: 0 0 90px; }
+label { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.03em; }
+input, select {
+  font: inherit;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  width: 100%;
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+
+.trip-toggle { display: flex; gap: 18px; margin-bottom: 16px; font-size: 14px; }
+.trip-toggle label { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); font-weight: 500; display: flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; }
+
+.swap {
+  flex: 0 0 auto;
+  height: 38px; width: 38px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--accent);
+}
+.swap:hover { background: var(--accent-soft); }
+
+.advanced { margin-bottom: 14px; }
+.advanced summary { cursor: pointer; font-size: 14px; color: var(--accent); font-weight: 500; }
+.advanced .row { margin-top: 14px; }
+
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 11px 22px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.primary:hover { background: #1449b8; }
+button.primary:disabled { opacity: 0.6; cursor: progress; }
+
+.suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0; right: 0;
+  z-index: 20;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(16, 32, 64, 0.12);
+  max-height: 260px;
+  overflow-y: auto;
+}
+.suggestions li { padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.suggestions li:hover, .suggestions li[aria-selected="true"] { background: var(--accent-soft); }
+.suggestions .code { font-weight: 700; margin-right: 8px; color: var(--accent); }
+.suggestions .name { color: var(--muted); }
+
+.status {
+  margin-top: 20px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: #fff;
+}
+.status.error { border-color: #f0c2c2; background: #fdf3f3; }
+.status .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+
+.summary {
+  margin-top: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: baseline;
+  font-size: 14px;
+  color: var(--muted);
+}
+.summary strong { color: var(--text); font-size: 16px; }
+
+.results { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+.itinerary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: center;
+}
+.itinerary.cheapest { border-color: var(--good); box-shadow: 0 0 0 1px var(--good); }
+
+.slice { display: flex; align-items: center; gap: 14px; padding: 6px 0; flex-wrap: wrap; }
+.slice + .slice { border-top: 1px dashed var(--border); margin-top: 6px; }
+.slice-dir {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex: 0 0 68px;
+}
+.times { font-size: 17px; font-weight: 600; white-space: nowrap; }
+.route { color: var(--muted); font-size: 13px; }
+.meta { font-size: 13px; color: var(--muted); }
+.stops-badge { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #eef1f7; color: var(--muted); }
+.stops-badge.nonstop { background: #e3f5ec; color: var(--good); }
+
+.price-col { text-align: right; }
+.price { font-size: 22px; font-weight: 700; }
+.price.unknown { font-size: 14px; font-weight: 500; color: var(--muted); }
+.book {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.book:hover { text-decoration: underline; }
+
+.badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.badge { font-size: 11px; padding: 2px 7px; border-radius: 99px; background: #eef1f7; color: var(--muted); }
+.badge.eco { background: #e3f5ec; color: var(--good); }
+.badge.warn { background: #fdf0e3; color: #a35a10; }
+
+.details { grid-column: 1 / -1; }
+.details summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+.leg { padding: 10px 0 10px 14px; border-left: 2px solid var(--border); margin-top: 10px; font-size: 13px; }
+.leg-head { font-weight: 600; }
+.leg-meta { color: var(--muted); }
+.layover { font-size: 12px; color: #a35a10; background: #fdf0e3; padding: 5px 10px; border-radius: 6px; margin-top: 8px; display: inline-block; }
+
+@media (max-width: 640px) {
+  .itinerary { grid-template-columns: 1fr; }
+  .price-col { text-align: left; }
+  .swap { display: none; }
+}
