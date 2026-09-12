@@ -18,6 +18,27 @@ export ANTHROPIC_API_KEY=sk-ant-...   # or run `ant auth login`
 uvicorn app.main:app --reload
 ```
 
+### Choosing a model backend
+
+```bash
+# Claude (default)
+export FLIGHT_AGENT_BACKEND=anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI / Codex
+export FLIGHT_AGENT_BACKEND=openai        # "codex" is accepted too
+export FLIGHT_AGENT_MODEL=gpt-5-codex     # set to a model your account has
+export OPENAI_API_KEY=sk-...
+```
+
+`GET /api/agent/status` reports which backend is selected, which model, and —
+if it cannot run — exactly what is missing. Add `?backend=openai` to ask about
+one that is not currently selected. The UI shows this on the status line, so a
+missing key is visible before you press Search rather than after.
+
+Both backends get the **same tools and the same system prompt** (`agent/prompt.py`),
+which is what makes comparing them meaningful.
+
 Open http://127.0.0.1:8000 and ask in plain English. Interactive API docs are
 at `/docs`.
 
@@ -25,12 +46,17 @@ Without an API key everything except the agent still works — the deal search,
 the CLI, and the REST API need no LLM. The UI says so up front rather than
 failing when you press Search.
 
-### As an MCP server
+### As an MCP server — for Codex, Claude Code, or any MCP client
 
 ```bash
-python -m app.mcp_server           # stdio, for Claude Desktop / Claude Code
+python -m app.mcp_server           # stdio
 python -m app.mcp_server --http    # streamable HTTP on :8765
 ```
+
+This is the other way to use Codex here: instead of Codex being the model
+*inside* this app, this app becomes a tool server that Codex's own harness
+calls. Any MCP-speaking client — Codex, Claude Desktop, Claude Code — can
+drive the flight search with no code change.
 
 Claude Desktop config:
 
@@ -58,8 +84,9 @@ shows each step and a live progress bar.
 
 ## Three layers
 
-1. **Agent** — natural language in, tool calls out. Claude (`claude-opus-5`)
-   with five tools, streaming its work to the browser over SSE.
+1. **Agent** — natural language in, tool calls out. Five tools, streaming
+   work to the browser over SSE. Runs on Claude or on OpenAI/Codex models;
+   pick with one environment variable.
 2. **Deal search** — a wide search across many dates and destinations at once.
    The part that makes this cheap enough to be worth doing.
 3. **Point search** — one route, one date, like any flight site.
@@ -179,9 +206,14 @@ app/
   main.py            FastAPI routes
   mcp_server.py      the same tools over MCP
   agent/
-    tools.py         the 5 tools Claude can call (docstrings ARE the prompts)
-    runner.py        the tool-use loop, streaming events to the browser
+    tools.py         the 5 tools (docstrings ARE the descriptions models read)
+    registry.py      provider-neutral view of those tools
+    prompt.py        the system prompt, shared by every backend
+    runner.py        threading + event streaming, backend-agnostic
     context.py       lets a running tool emit progress to its caller
+    backends/
+      anthropic_backend.py  Claude, via the SDK's tool runner
+      openai_backend.py     OpenAI / Codex, hand-written tool loop
   schemas.py         point-search contract (independent of fli's models)
   service.py         the ONLY module that imports fli
   providers/
@@ -207,7 +239,14 @@ tests/               104 tests, all offline
 so the usage rules live there — cost the search before running it, how trip
 lengths map to arguments, when to use a region instead of airport codes.
 
-Two decisions worth knowing:
+The tools are declared once, with Anthropic's `@beta_tool`, which also keeps
+the undecorated function on `.func`. `registry.py` turns that into a
+provider-neutral form, so **one declaration feeds three consumers**: Claude's
+native tool use, OpenAI's function calling, and the MCP server. There is no
+second tool list to drift out of sync — a test asserts the schemas stay
+identical across them.
+
+Two further decisions worth knowing:
 
 * **Tools return compact text; full results bypass the model.** A wide search
   produces hundreds of grid rows. Feeding those back through Claude would be
@@ -295,6 +334,13 @@ Findings from wiring it up, worth knowing before committing to it:
   swap in Redis is `deals/jobs.py:JobStore`.
 * The agent is single-turn: `/api/ask` accepts a `history` array, but the UI
   does not yet send one, so follow-up questions start fresh.
+* The OpenAI backend uses Chat Completions function calling and has been
+  tested only against a stubbed client — never a live endpoint. The default
+  model id (`gpt-5-codex`) is a starting guess: set `FLIGHT_AGENT_MODEL` to a
+  model your account actually has. A rejected model surfaces as a clear
+  error naming that variable.
+* The OpenAI backend emits no `thinking` events — Chat Completions does not
+  expose reasoning — so the activity log is a little quieter than on Claude.
 * Agent runs cost Anthropic API tokens on top of whatever the flight provider
   costs.
 * Region lists are hand-curated long-haul gateways, not exhaustive. A scan costs

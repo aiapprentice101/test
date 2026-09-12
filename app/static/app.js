@@ -52,10 +52,11 @@ function logLine(text, kind) {
     const data = await res.json();
     const status = $("agent-status");
     if (data.available) {
-      status.textContent = `agent ready (${data.model})`;
+      status.textContent = `agent ready — ${data.backend} · ${data.model}`;
     } else {
       status.className = "agent-status bad";
-      status.textContent = data.reason || "agent unavailable";
+      const where = data.backend ? `${data.backend}: ` : "";
+      status.textContent = where + (data.reason || "agent unavailable");
     }
   } catch {
     /* leave the status line blank */

@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.agent.runner import AgentUnavailable, stream_answer
+from app.agent.runner import AgentUnavailable, describe_backend, stream_answer
 from app.deals.jobs import Job, store
 from app.deals.planner import PlanError, plan_search
 from app.deals.regions import UnknownRegionError, known_regions
@@ -168,15 +168,13 @@ def ask(request: AskRequest) -> StreamingResponse:
 
 
 @app.get("/api/agent/status")
-def agent_status() -> dict:
-    """Whether the agent has credentials, so the UI can say so up front."""
-    try:
-        from app.agent.runner import MODEL, _client
+def agent_status(backend: str | None = Query(default=None)) -> dict:
+    """Whether the agent can run, and on which backend and model.
 
-        _client()
-        return {"available": True, "model": MODEL}
-    except AgentUnavailable as exc:
-        return {"available": False, "reason": str(exc)}
+    `backend` overrides `FLIGHT_AGENT_BACKEND` for the check, so the UI can
+    ask about one that is not currently selected.
+    """
+    return describe_backend(backend)
 
 
 @app.get("/api/regions", response_model=list[str])

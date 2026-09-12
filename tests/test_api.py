@@ -250,18 +250,35 @@ class TestDealJobLifecycle:
         assert res.json()["error"] == "invalid_plan"
 
 
+class StubBackend:
+    """A backend that emits scripted events without touching a model."""
+
+    name = "stub"
+    model = "stub-model"
+
+    def __init__(self, events=(), unavailable=None):
+        self.events = list(events)
+        self.unavailable = unavailable
+
+    def check(self):
+        if self.unavailable:
+            raise self.unavailable
+
+    def run(self, question, history, emit, client=None):
+        if self.unavailable:
+            raise self.unavailable
+        for name, data in self.events:
+            emit(name, data)
+
+
 class TestAskEndpoint:
     """The natural-language endpoint the UI talks to."""
 
     def test_streams_sse_events(self, monkeypatch):
-        from test_agent import Block, Message, StubClient
-
         from app.agent import runner as runner_mod
 
-        client_stub = StubClient([
-            Block and Message([Block(type="text", text="Best fare is $4,090 to SFO.")]),
-        ])
-        monkeypatch.setattr(runner_mod, "_client", lambda: client_stub)
+        backend = StubBackend([("text", {"text": "Best fare is $4,090 to SFO."})])
+        monkeypatch.setattr(runner_mod, "get_backend", lambda *a, **k: backend)
 
         with client.stream("POST", "/api/ask", json={"question": "cheapest to SFO?"}) as res:
             assert res.status_code == 200
@@ -276,16 +293,15 @@ class TestAskEndpoint:
         from app.agent import runner as runner_mod
         from app.agent.runner import AgentUnavailable
 
-        def no_creds():
-            raise AgentUnavailable("no Anthropic credentials found")
-
-        monkeypatch.setattr(runner_mod, "_client", no_creds)
+        backend = StubBackend(unavailable=AgentUnavailable("no Anthropic credentials found"))
+        monkeypatch.setattr(runner_mod, "get_backend", lambda *a, **k: backend)
 
         with client.stream("POST", "/api/ask", json={"question": "hi"}) as res:
             body = "".join(res.iter_text())
 
         assert "no Anthropic credentials found" in body
         assert '"type": "error"' in body
+        assert '"type": "done"' in body
 
     def test_empty_question_rejected(self):
         assert client.post("/api/ask", json={"question": ""}).status_code == 422
@@ -294,9 +310,17 @@ class TestAskEndpoint:
         from app.agent import runner as runner_mod
         from app.agent.runner import AgentUnavailable
 
-        monkeypatch.setattr(
-            runner_mod, "_client", lambda: (_ for _ in ()).throw(AgentUnavailable("no key"))
-        )
+        backend = StubBackend(unavailable=AgentUnavailable("no key"))
+        monkeypatch.setattr(runner_mod, "get_backend", lambda *a, **k: backend)
+
         body = client.get("/api/agent/status").json()
         assert body["available"] is False
         assert "no key" in body["reason"]
+        assert body["backend"] == "stub"
+
+    def test_agent_status_can_be_asked_about_another_backend(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        body = client.get("/api/agent/status", params={"backend": "openai"}).json()
+        assert body["backend"] == "openai"
+        assert body["available"] is False
