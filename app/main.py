@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
+from app.agent.runner import AgentUnavailable, stream_answer
 from app.deals.jobs import Job, store
 from app.deals.planner import PlanError, plan_search
 from app.deals.regions import UnknownRegionError, known_regions
@@ -125,6 +128,55 @@ def cheapest_dates(
         currency=currency,
         trip_duration=trip_duration,
     )
+
+
+class AskRequest(BaseModel):
+    """A natural-language question for the agent."""
+
+    question: str = Field(min_length=1, max_length=2000)
+    history: list[dict] = Field(default_factory=list)
+
+
+@app.post("/api/ask")
+def ask(request: AskRequest) -> StreamingResponse:
+    """Answer a plain-English flight question, streaming the agent's work.
+
+    Server-sent events: `thinking`, `text`, `tool_call`, `progress`, `plan`,
+    `results`, `error`, `done`. Streamed because a wide search runs for
+    minutes and the user should see it happening.
+    """
+
+    def sse(payload: dict) -> str:
+        return f"data: {json.dumps(payload, default=str)}\n\n"
+
+    def events():
+        # `stream_answer` is a generator, so credential errors surface on the
+        # first iteration rather than at the call — the loop must be inside
+        # the guard, not just the call.
+        try:
+            for event in stream_answer(request.question, request.history):
+                yield sse(event)
+        except AgentUnavailable as exc:
+            yield sse({"type": "error", "message": str(exc)})
+            yield sse({"type": "done"})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/agent/status")
+def agent_status() -> dict:
+    """Whether the agent has credentials, so the UI can say so up front."""
+    try:
+        from app.agent.runner import MODEL, _client
+
+        _client()
+        return {"available": True, "model": MODEL}
+    except AgentUnavailable as exc:
+        return {"available": False, "reason": str(exc)}
 
 
 @app.get("/api/regions", response_model=list[str])

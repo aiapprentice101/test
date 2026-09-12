@@ -13,27 +13,66 @@ itinerary details with layovers and CO₂ figures.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+
+export ANTHROPIC_API_KEY=sk-ant-...   # or run `ant auth login`
 uvicorn app.main:app --reload
 ```
 
-Open http://127.0.0.1:8000. Interactive API docs are at `/docs`.
+Open http://127.0.0.1:8000 and ask in plain English. Interactive API docs are
+at `/docs`.
+
+Without an API key everything except the agent still works — the deal search,
+the CLI, and the REST API need no LLM. The UI says so up front rather than
+failing when you press Search.
+
+### As an MCP server
+
+```bash
+python -m app.mcp_server           # stdio, for Claude Desktop / Claude Code
+python -m app.mcp_server --http    # streamable HTTP on :8765
+```
+
+Claude Desktop config:
+
+```json
+{"mcpServers": {"flights": {"command": "/path/to/.venv/bin/python",
+                            "args": ["-m", "app.mcp_server"],
+                            "cwd": "/path/to/this/repo"}}}
+```
+
+The MCP tools and the in-app agent's tools are the same functions with the
+same descriptions — `@beta_tool` keeps the original on `.func`, so there is one
+implementation, not two that drift.
 
 > **Network requirement:** the app queries `www.google.com` on every search. It
 > needs unrestricted outbound HTTPS to that host — see [Known limitations](#known-limitations).
 
-## Two things live here
+Ask it a question the way you'd ask a person:
 
-1. **Point search** — a web UI and API for one route on one date, like any
-   flight site.
-2. **Deal search** — a wide, agent-facing search across many dates and many
-   destinations at once: *"Singapore Airlines, SIN to the US, leave December,
-   back in January, 30-day trip, business — find me the best fare and the
-   dates."* This is the interesting part.
+> *Singapore Airlines, Singapore to the USA, round trip. Leave December 2026,
+> back January 2027, 30-day trip, business class. Best rate and which dates?*
+
+Claude parses that, resolves "Singapore" to SIN and "the USA" to twelve
+gateways, costs the search, runs it, and reports the answer — while the UI
+shows each step and a live progress bar.
+
+## Three layers
+
+1. **Agent** — natural language in, tool calls out. Claude (`claude-opus-5`)
+   with five tools, streaming its work to the browser over SSE.
+2. **Deal search** — a wide search across many dates and destinations at once.
+   The part that makes this cheap enough to be worth doing.
+3. **Point search** — one route, one date, like any flight site.
+
+The same tools are also exposed as an **MCP server**, so Claude Desktop or
+Claude Code can drive the search directly instead of through this UI.
 
 ## API
 
-| Method | Path               | Purpose                                                   |
-|--------|--------------------|-----------------------------------------------------------|
+| Method | Path                  | Purpose                                                |
+|--------|-----------------------|--------------------------------------------------------|
+| `POST` | `/api/ask`            | **Natural language in, SSE stream of the agent's work** |
+| `GET`  | `/api/agent/status`   | Whether the agent has credentials                      |
 | `POST` | `/api/deals`       | Start a wide fare search; returns a job to poll           |
 | `GET`  | `/api/deals/{id}`  | Poll progress, then results                               |
 | `POST` | `/api/deals/plan`  | Cost a wide search **without running it**                 |
@@ -138,6 +177,11 @@ counts (`adults`, `children`, `infants_in_seat`, `infants_on_lap`), `cabin_class
 ```
 app/
   main.py            FastAPI routes
+  mcp_server.py      the same tools over MCP
+  agent/
+    tools.py         the 5 tools Claude can call (docstrings ARE the prompts)
+    runner.py        the tool-use loop, streaming events to the browser
+    context.py       lets a running tool emit progress to its caller
   schemas.py         point-search contract (independent of fli's models)
   service.py         the ONLY module that imports fli
   providers/
@@ -152,8 +196,29 @@ app/
   static/            single-page UI (no build step, no framework)
 scripts/
   find_deals.py      run a wide search from the terminal
-tests/               79 tests, all offline
+tests/               104 tests, all offline
 ```
+
+### How the agent is wired
+
+`app/agent/tools.py` holds five tools: `find_airports`,
+`list_destination_regions`, `estimate_search_cost`, `find_best_fares`, and
+`search_one_date`. Their **docstrings are the tool descriptions Claude reads**,
+so the usage rules live there — cost the search before running it, how trip
+lengths map to arguments, when to use a region instead of airport codes.
+
+Two decisions worth knowing:
+
+* **Tools return compact text; full results bypass the model.** A wide search
+  produces hundreds of grid rows. Feeding those back through Claude would be
+  slow and pointless, so the tool returns a short summary and the full payload
+  goes straight to the browser as a `results` event.
+* **Tools take comma-separated strings, not arrays.** Flat scalar arguments
+  avoid JSON-schema array edge cases in tool calls.
+
+The loop runs on a worker thread and pushes events through a queue, so the
+browser sees `thinking`, `tool_call`, `progress`, `text`, and `results` as they
+happen rather than waiting minutes for a single response.
 
 Two deliberate seams. `service.py` is the only module that imports `fli`, so an
 upstream shape change lands in one file. `providers/base.py` is the swap point
@@ -175,8 +240,8 @@ pytest
 The suite stubs `fli`'s network client, so it runs offline and deterministically.
 It covers filter construction, result normalization (including the round-trip
 pricing rule below), validation, error mapping, the planner's date arithmetic and
-request budgeting, and the engine's two-phase flow — including what happens when
-individual routes fail.
+request budgeting, the engine's two-phase flow — including what happens when
+individual routes fail — and the agent layer, with the Anthropic client stubbed.
 
 ## Notes on `fli`
 
@@ -228,6 +293,10 @@ Findings from wiring it up, worth knowing before committing to it:
   that actually answers "is this a good fare?"
 * Jobs are in-memory and single-process; they are lost on restart. The seam to
   swap in Redis is `deals/jobs.py:JobStore`.
+* The agent is single-turn: `/api/ask` accepts a `history` array, but the UI
+  does not yet send one, so follow-up questions start fresh.
+* Agent runs cost Anthropic API tokens on top of whatever the flight provider
+  costs.
 * Region lists are hand-curated long-haul gateways, not exhaustive. A scan costs
   one request per destination, so the defaults trade coverage for cost — edit
   `deals/regions.py` to taste.

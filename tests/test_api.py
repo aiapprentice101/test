@@ -38,7 +38,7 @@ class TestHealthAndStatic:
     def test_index_serves_ui(self):
         res = client.get("/")
         assert res.status_code == 200
-        assert "Flight Search" in res.text
+        assert "Flight Agent" in res.text
 
 
 class TestAirports:
@@ -248,3 +248,55 @@ class TestDealJobLifecycle:
         )
         assert res.status_code == 422
         assert res.json()["error"] == "invalid_plan"
+
+
+class TestAskEndpoint:
+    """The natural-language endpoint the UI talks to."""
+
+    def test_streams_sse_events(self, monkeypatch):
+        from test_agent import Block, Message, StubClient
+
+        from app.agent import runner as runner_mod
+
+        client_stub = StubClient([
+            Block and Message([Block(type="text", text="Best fare is $4,090 to SFO.")]),
+        ])
+        monkeypatch.setattr(runner_mod, "_client", lambda: client_stub)
+
+        with client.stream("POST", "/api/ask", json={"question": "cheapest to SFO?"}) as res:
+            assert res.status_code == 200
+            assert res.headers["content-type"].startswith("text/event-stream")
+            body = "".join(res.iter_text())
+
+        assert '"type": "text"' in body
+        assert "Best fare is $4,090 to SFO." in body
+        assert body.rstrip().endswith('data: {"type": "done"}')
+
+    def test_missing_credentials_are_reported_not_raised(self, monkeypatch):
+        from app.agent import runner as runner_mod
+        from app.agent.runner import AgentUnavailable
+
+        def no_creds():
+            raise AgentUnavailable("no Anthropic credentials found")
+
+        monkeypatch.setattr(runner_mod, "_client", no_creds)
+
+        with client.stream("POST", "/api/ask", json={"question": "hi"}) as res:
+            body = "".join(res.iter_text())
+
+        assert "no Anthropic credentials found" in body
+        assert '"type": "error"' in body
+
+    def test_empty_question_rejected(self):
+        assert client.post("/api/ask", json={"question": ""}).status_code == 422
+
+    def test_agent_status_reports_unavailable(self, monkeypatch):
+        from app.agent import runner as runner_mod
+        from app.agent.runner import AgentUnavailable
+
+        monkeypatch.setattr(
+            runner_mod, "_client", lambda: (_ for _ in ()).throw(AgentUnavailable("no key"))
+        )
+        body = client.get("/api/agent/status").json()
+        assert body["available"] is False
+        assert "no key" in body["reason"]
