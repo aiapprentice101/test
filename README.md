@@ -49,6 +49,7 @@ failing when you press Search.
 ### As an MCP server — for Codex, Claude Code, or any MCP client
 
 ```bash
+pip install 'mcp[cli]'             # optional extra, not in requirements.txt
 python -m app.mcp_server           # stdio
 python -m app.mcp_server --http    # streamable HTTP on :8765
 ```
