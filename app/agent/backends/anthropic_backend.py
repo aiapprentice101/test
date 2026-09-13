@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from app.agent.backends.base import AgentUnavailable, Emit
@@ -15,6 +16,21 @@ from app.agent.prompt import system_prompt
 from app.agent.tools import ALL_TOOLS
 
 logger = logging.getLogger(__name__)
+
+
+def _has_credentials(client) -> bool:
+    """Whether the client has anything to authenticate with.
+
+    The SDK constructs happily with no credentials at all — `api_key` is just
+    None and the request fails later — so a successful constructor is not
+    proof of anything. An unset env var is not proof of the opposite either:
+    credentials may come from an `ant auth login` profile that the SDK
+    resolves for itself, so a profile on disk counts as available.
+    """
+    if client.api_key or client.auth_token or client.auth_headers:
+        return True
+    profile_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "anthropic"
+    return profile_dir.is_dir() and any(profile_dir.iterdir())
 
 
 class AnthropicBackend:
@@ -32,13 +48,15 @@ class AnthropicBackend:
         except ImportError as exc:
             raise AgentUnavailable("the `anthropic` package is not installed") from exc
         try:
-            # The SDK also accepts an `ant auth login` profile, so an unset env
-            # var is not proof there are no credentials — let the SDK decide.
-            return anthropic.Anthropic()
+            client = anthropic.Anthropic()
         except Exception as exc:  # noqa: BLE001
+            raise AgentUnavailable(f"could not create an Anthropic client: {exc}") from exc
+
+        if not _has_credentials(client):
             raise AgentUnavailable(
                 "no Anthropic credentials found. Set ANTHROPIC_API_KEY or run `ant auth login`."
-            ) from exc
+            )
+        return client
 
     def check(self) -> None:
         """Confirm the backend can run."""

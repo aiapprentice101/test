@@ -233,3 +233,32 @@ class TestStreamThroughOpenAIBackend:
 
         assert kinds == ["tool_call", "text", "done"]
         assert events[1]["text"] == "Tokyo is NRT or HND."
+
+
+class TestAnthropicCredentialDetection:
+    """The SDK constructs with no credentials, so a client object proves nothing."""
+
+    def test_no_credentials_is_reported(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))  # no ant profile
+
+        status = describe_backend("anthropic")
+        assert status["available"] is False
+        assert "ANTHROPIC_API_KEY" in status["reason"]
+
+    def test_api_key_makes_it_available(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        assert describe_backend("anthropic")["available"] is True
+
+    def test_an_ant_profile_counts_as_credentials(self, monkeypatch, tmp_path):
+        """A profile from `ant auth login` sets no env var but is still valid."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        profile = tmp_path / "anthropic"
+        profile.mkdir()
+        (profile / "profiles.json").write_text("{}")
+
+        assert describe_backend("anthropic")["available"] is True
