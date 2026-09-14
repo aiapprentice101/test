@@ -21,7 +21,7 @@ from app.deals.engine import run_deal_search
 from app.deals.planner import PlanError, plan_search
 from app.deals.regions import known_regions
 from app.deals.schemas import DealSearchRequest
-from app.providers.fli_provider import FliProvider
+from app.providers.fli_provider import build_provider
 from app.schemas import SearchRequest
 from app.service import SearchError, search_flights, suggest_airports
 
@@ -238,7 +238,7 @@ def find_best_fares(
     try:
         result = run_deal_search(
             request,
-            FliProvider(),
+            build_provider(),
             progress=lambda stage, done, total: emit(
                 "progress", stage=stage, done=done, total=total
             ),

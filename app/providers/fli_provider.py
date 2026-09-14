@@ -9,6 +9,7 @@ deliberately runs slower than `fli`'s default.
 from __future__ import annotations
 
 import logging
+import os
 
 from app.providers.base import GridPrice, GridQuery, ItineraryQuery
 from app.schemas import SearchRequest
@@ -90,3 +91,20 @@ class FliProvider:
             limit=query.limit,
         )
         return search_flights(request).itineraries
+
+
+def build_provider(use_cache: bool = True, ttl_seconds: int | None = None):
+    """The provider the app should use: `fli`, wrapped in the price cache.
+
+    Set `FLIGHT_CACHE=off` to bypass the cache entirely.
+    """
+    provider = FliProvider()
+    if not use_cache or os.environ.get("FLIGHT_CACHE", "").lower() in ("off", "0", "false"):
+        return provider
+
+    from app.cache import DEFAULT_TTL_SECONDS, CachedProvider, PriceCache
+
+    ttl = ttl_seconds if ttl_seconds is not None else int(
+        os.environ.get("FLIGHT_CACHE_TTL", DEFAULT_TTL_SECONDS)
+    )
+    return CachedProvider(provider, PriceCache(ttl_seconds=ttl))

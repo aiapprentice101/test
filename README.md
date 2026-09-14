@@ -83,6 +83,11 @@ Claude parses that, resolves "Singapore" to SIN and "the USA" to twelve
 gateways, costs the search, runs it, and reports the answer — while the UI
 shows each step and a live progress bar.
 
+Then you refine it: *"same thing but non-stop only"*, *"what about January
+instead?"*. It is a conversation, not a one-shot search box — earlier turns
+stay on the page with their own results, and repeated scans come back from a
+local cache instead of the network.
+
 ## Three layers
 
 1. **Agent** — natural language in, tool calls out. Five tools, streaming
@@ -153,6 +158,30 @@ The planner also throws away work before it costs anything. A 30-day trip
 departing 1 December returns on 31 December — which is not "back in January",
 so 1 December is dropped and the real window is 2–31 December. Constraint
 reconciliation like this is pure logic, runs offline, and is covered by tests.
+
+### Price cache
+
+Grid scans are cached in SQLite (`.flight-cache.sqlite3`), keyed by every
+field that affects the price — route, dates, trip length, cabin, airlines,
+stops, currency, passengers. A repeat or refined search reuses them:
+
+```
+⚡ 10 of 17 scans served from cache
+```
+
+**Refined itineraries are never cached.** The distinction is deliberate: a
+grid scan answers "which dates are worth looking at", where a few hours of
+staleness changes nothing, but a refined itinerary is the fare you would
+actually book and must be live.
+
+```bash
+FLIGHT_CACHE=off              # bypass entirely
+FLIGHT_CACHE_TTL=21600        # seconds, default 6h
+FLIGHT_CACHE_PATH=/some/file.sqlite3
+```
+
+Failed scans are not cached, so a transient network error retries next time
+rather than being remembered as "no flights".
 
 ### Agent-facing contract
 
@@ -326,15 +355,17 @@ Findings from wiring it up, worth knowing before committing to it:
   responses, including the browser UI.
 * No booking. Results deep-link to Google Flights.
 * Multi-city search isn't exposed yet; `fli` supports it (`build_multi_city_segments`).
-* **No caching, and no price history.** Every search hits the provider fresh. For
-  a real product the coarse grid should be refreshed on a schedule and stored,
-  so user queries read an index instead of scanning live — that collapses
-  per-query cost, makes agent responses fast, and accumulates the price history
-  that actually answers "is this a good fare?"
+* **No price history yet.** Scans are cached (see below) but not retained as a
+  time series, so the app cannot yet answer "is this a good fare *for this
+  route*?". The cache table is the natural place to grow that.
 * Jobs are in-memory and single-process; they are lost on restart. The seam to
   swap in Redis is `deals/jobs.py:JobStore`.
-* The agent is single-turn: `/api/ask` accepts a `history` array, but the UI
-  does not yet send one, so follow-up questions start fresh.
+* Conversation history is **text only** — the assistant's summary, not the
+  tool calls behind it. So a follow-up sees what was *said*, not the full grid
+  from the previous turn. That keeps the payload provider-neutral, at the cost
+  of the agent occasionally re-running a scan it could have reasoned from.
+  The cache absorbs most of that cost.
+* History lives in the browser tab; a refresh starts a new conversation.
 * The OpenAI backend uses Chat Completions function calling and has been
   tested only against a stubbed client — never a live endpoint. The default
   model id (`gpt-5-codex`) is a starting guess: set `FLIGHT_AGENT_MODEL` to a

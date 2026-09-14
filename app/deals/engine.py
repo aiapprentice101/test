@@ -130,7 +130,12 @@ def run_deal_search(
         plan.estimated_requests,
     )
 
+    hits_before = getattr(provider, "hits", 0)
     cells, warnings, made, succeeded, failed = _grid_cells(plan, request, provider, progress)
+    # A scan served from cache is not an upstream request, so it should not be
+    # reported as one.
+    cache_hits = getattr(provider, "hits", 0) - hits_before
+    made -= cache_hits
     warnings = list(plan.notes) + warnings
     ranked = _best_per_cell(cells)
 
@@ -199,6 +204,7 @@ def run_deal_search(
         currency=currency,
         stats=DealSearchStats(
             requests_made=made,
+            cache_hits=cache_hits,
             requests_estimated=plan.estimated_requests,
             grid_cells=len(ranked),
             scans_succeeded=succeeded,

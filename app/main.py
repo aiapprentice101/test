@@ -19,7 +19,7 @@ from app.deals.jobs import Job, store
 from app.deals.planner import PlanError, plan_search
 from app.deals.regions import UnknownRegionError, known_regions
 from app.deals.schemas import DealSearchRequest
-from app.providers.fli_provider import FliProvider, configure_rate_limit
+from app.providers.fli_provider import build_provider, configure_rate_limit
 from app.schemas import (
     AirportOut,
     DateSearchResponse,
@@ -42,7 +42,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 # down before the first search; see app/providers/fli_provider.py.
 configure_rate_limit(int(os.environ.get("FLI_CALLS_PER_SECOND", "1")))
 
-provider = FliProvider()
+provider = build_provider()
 
 app = FastAPI(
     title="Flight Search",

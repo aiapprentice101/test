@@ -23,7 +23,7 @@ from app.service import SearchError
 def stub_provider(monkeypatch):
     """Point the tools at a fake flight provider."""
     provider = FakeProvider({"LAX": 4200.0, "SFO": 5000.0})
-    monkeypatch.setattr(agent_tools, "FliProvider", lambda: provider)
+    monkeypatch.setattr(agent_tools, "build_provider", lambda: provider)
     return provider
 
 
@@ -118,7 +118,7 @@ class TestFindBestFares:
             def scan_date_grid(self, query):
                 raise SearchError("Could not reach Google Flights", hint="check the network")
 
-        monkeypatch.setattr(agent_tools, "FliProvider", lambda: Broken())
+        monkeypatch.setattr(agent_tools, "build_provider", lambda: Broken())
         out = agent_tools.find_best_fares.call(self.args())
         # A per-route failure degrades to "no fares", carrying the reason.
         assert "No fares found" in out

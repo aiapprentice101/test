@@ -324,3 +324,51 @@ class TestAskEndpoint:
         body = client.get("/api/agent/status", params={"backend": "openai"}).json()
         assert body["backend"] == "openai"
         assert body["available"] is False
+
+
+class TestConversationHistory:
+    """Follow-up questions carry the prior turns."""
+
+    def test_history_reaches_the_backend(self, monkeypatch):
+        from app.agent import runner as runner_mod
+
+        seen = {}
+
+        class RecordingBackend(StubBackend):
+            def run(self, question, history, emit, client=None):
+                seen["question"] = question
+                seen["history"] = history
+                emit("text", {"text": "ok"})
+
+        monkeypatch.setattr(
+            runner_mod, "get_backend", lambda *a, **k: RecordingBackend()
+        )
+
+        history = [
+            {"role": "user", "content": "SIN to the US in December, business"},
+            {"role": "assistant", "content": "Best fare is $4,090 to SFO on 16 Dec."},
+        ]
+        with client.stream(
+            "POST", "/api/ask",
+            json={"question": "what about January instead?", "history": history},
+        ) as res:
+            "".join(res.iter_text())
+
+        assert seen["question"] == "what about January instead?"
+        assert seen["history"] == history
+
+    def test_history_defaults_to_empty(self, monkeypatch):
+        from app.agent import runner as runner_mod
+
+        seen = {}
+
+        class RecordingBackend(StubBackend):
+            def run(self, question, history, emit, client=None):
+                seen["history"] = history
+                emit("text", {"text": "ok"})
+
+        monkeypatch.setattr(runner_mod, "get_backend", lambda *a, **k: RecordingBackend())
+        with client.stream("POST", "/api/ask", json={"question": "hi"}) as res:
+            "".join(res.iter_text())
+
+        assert seen["history"] == []

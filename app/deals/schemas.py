@@ -119,6 +119,7 @@ class DealSearchStats(BaseModel):
     """What the search actually cost."""
 
     requests_made: int
+    cache_hits: int = 0
     requests_estimated: int
     grid_cells: int
     scans_succeeded: int

@@ -4,11 +4,13 @@ const $ = (id) => document.getElementById(id);
 const form = $("ask-form");
 const questionEl = $("question");
 const askButton = $("ask-button");
-const activityEl = $("activity");
-const logEl = $("activity-log");
-const answerEl = $("answer");
-const resultsEl = $("results");
-const calendarSection = $("calendar-section");
+const resetButton = $("reset");
+const transcriptEl = $("transcript");
+
+/** Text-only conversation history sent back with each question. */
+const history = [];
+/** Every chart on the page, so a resize can redraw them all. */
+const charts = [];
 
 /* ------------------------------------------------------------------ utils */
 
@@ -38,25 +40,18 @@ function shortDate(iso) {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
-function logLine(text, kind) {
-  const li = el("li", kind, text);
-  logEl.appendChild(li);
-  return li;
-}
-
 /* ------------------------------------------------------------ agent status */
 
 (async function checkAgent() {
   try {
-    const res = await fetch("/api/agent/status");
-    const data = await res.json();
+    const data = await (await fetch("/api/agent/status")).json();
     const status = $("agent-status");
     if (data.available) {
       status.textContent = `agent ready — ${data.backend} · ${data.model}`;
     } else {
       status.className = "agent-status bad";
-      const where = data.backend ? `${data.backend}: ` : "";
-      status.textContent = where + (data.reason || "agent unavailable");
+      status.textContent = (data.backend ? `${data.backend}: ` : "") +
+        (data.reason || "agent unavailable");
     }
   } catch {
     /* leave the status line blank */
@@ -71,10 +66,13 @@ $("examples").addEventListener("click", (event) => {
   }
 });
 
-$("toggle-activity").addEventListener("click", (event) => {
-  const hidden = logEl.hasAttribute("hidden");
-  logEl.toggleAttribute("hidden", !hidden);
-  event.target.textContent = hidden ? "hide" : "show";
+resetButton.addEventListener("click", () => {
+  history.length = 0;
+  charts.length = 0;
+  transcriptEl.replaceChildren();
+  resetButton.hidden = true;
+  $("examples").hidden = false;
+  questionEl.focus();
 });
 
 /* ------------------------------------------------------------- tool labels */
@@ -97,56 +95,9 @@ function describeScope(input) {
   return bits.length ? `: ${bits.join(", ")}` : "";
 }
 
-/* ---------------------------------------------------------------- results */
-
-function renderDeals(result) {
-  resultsEl.replaceChildren();
-  const deals = result.deals || [];
-  if (!deals.length) return;
-
-  const heading = el("h2", "sr-only", "Results");
-  resultsEl.appendChild(heading);
-
-  deals.forEach((deal) => {
-    const isBest = deal.rank === 1;
-    const card = el("article", `deal${isBest ? " best" : ""}`);
-    card.appendChild(el("div", "deal-rank", `#${deal.rank}`));
-
-    const middle = el("div");
-    const route = el("div", "deal-route");
-    route.append(`${deal.origin} → ${deal.destination}`);
-    if (isBest) route.appendChild(el("span", "badge", "Best"));
-    if (deal.refine_note) route.appendChild(el("span", "badge warn", "estimate"));
-    middle.appendChild(route);
-
-    const dates = deal.return_date
-      ? `${shortDate(deal.departure_date)} → ${shortDate(deal.return_date)}${
-          deal.trip_days ? ` · ${deal.trip_days} days` : ""
-        }`
-      : shortDate(deal.departure_date);
-    middle.appendChild(el("div", "deal-dates", dates));
-
-    if (deal.itinerary) {
-      const flights = deal.itinerary.slices
-        .map((s) => s.legs.map((l) => `${l.airline_code}${l.flight_number}`).join(" "))
-        .join(" / ");
-      middle.appendChild(el("div", "deal-flights", flights));
-    }
-    card.appendChild(middle);
-
-    const price = el("div", "deal-price", money(deal.grid_price, deal.currency));
-    if (deal.savings_vs_median > 0) {
-      price.appendChild(
-        el("span", "deal-save", `${money(deal.savings_vs_median, deal.currency)} under median`)
-      );
-    }
-    card.appendChild(price);
-    resultsEl.appendChild(card);
-  });
-}
+/* ------------------------------------------------------------------ chart */
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-let chartPoints = [];
 
 function svg(tag, attrs = {}, text) {
   const node = document.createElementNS(SVG_NS, tag);
@@ -158,12 +109,10 @@ function svg(tag, attrs = {}, text) {
 /* A line, not bars: fares occupy a narrow band well above zero, and a bar
    chart truncated to that band overstates the differences. A line carries no
    zero-baseline promise, so it can show the real spread honestly. */
-function drawChart() {
-  const chart = $("chart");
-  const points = chartPoints;
+function drawChart(chart, points, tip) {
   if (points.length < 2) return;
 
-  const width = $("chart-wrap").clientWidth || 640;
+  const width = chart.parentElement.clientWidth || 640;
   const height = 200;
   const pad = { top: 18, right: 18, bottom: 24, left: 56 };
   const plotW = Math.max(60, width - pad.left - pad.right);
@@ -182,7 +131,6 @@ function drawChart() {
   chart.setAttribute("viewBox", `0 0 ${width} ${height}`);
   chart.replaceChildren();
 
-  // Recessive gridlines carrying the price scale.
   const grid = svg("g", { class: "chart-grid" });
   [0, 0.5, 1].forEach((t) => {
     const price = lo + (hi - lo) * (1 - t);
@@ -210,16 +158,12 @@ function drawChart() {
   chart.appendChild(svg("circle", { class: "chart-min-dot", cx: x(minIndex), cy: y(min), r: 5 }));
   const labelRight = x(minIndex) < width - pad.right - 90;
   chart.appendChild(
-    svg(
-      "text",
-      {
-        class: "chart-min-label",
-        x: x(minIndex) + (labelRight ? 10 : -10),
-        y: y(min) - 9,
-        "text-anchor": labelRight ? "start" : "end",
-      },
-      `cheapest ${money(min, points[0].currency)}`
-    )
+    svg("text", {
+      class: "chart-min-label",
+      x: x(minIndex) + (labelRight ? 10 : -10),
+      y: y(min) - 9,
+      "text-anchor": labelRight ? "start" : "end",
+    }, `cheapest ${money(min, points[0].currency)}`)
   );
 
   const axis = svg("g", { class: "chart-axis" });
@@ -233,17 +177,14 @@ function drawChart() {
   });
   chart.appendChild(axis);
 
-  const cursor = svg("g", { class: "chart-cursor-group" });
+  const cursor = svg("g", {});
   cursor.setAttribute("visibility", "hidden");
   const cursorLine = svg("line", { class: "chart-cursor", y1: pad.top, y2: pad.top + plotH });
   const cursorDot = svg("circle", { class: "chart-cursor-dot", r: 4 });
   cursor.append(cursorLine, cursorDot);
   chart.appendChild(cursor);
 
-  const tip = $("chart-tip");
-  const hit = svg("rect", {
-    x: pad.left, y: pad.top, width: plotW, height: plotH, fill: "transparent",
-  });
+  const hit = svg("rect", { x: pad.left, y: pad.top, width: plotW, height: plotH, fill: "transparent" });
   hit.addEventListener("mousemove", (event) => {
     const box = chart.getBoundingClientRect();
     const scale = width / box.width;
@@ -259,8 +200,8 @@ function drawChart() {
     tip.hidden = false;
     tip.textContent =
       `${point.departure_date} · ${point.destination} · ${money(point.price, point.currency)}`;
-    tip.style.left = `${(x(i) / scale)}px`;
-    tip.style.top = `${(y(point.price) / scale) - 10}px`;
+    tip.style.left = `${x(i) / scale}px`;
+    tip.style.top = `${y(point.price) / scale - 10}px`;
   });
   hit.addEventListener("mouseleave", () => {
     cursor.setAttribute("visibility", "hidden");
@@ -269,108 +210,207 @@ function drawChart() {
   chart.appendChild(hit);
 }
 
-function renderCalendar(result) {
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => charts.forEach((c) => drawChart(c.svg, c.points, c.tip)), 150);
+});
+
+/* ---------------------------------------------------------------- one turn */
+
+function newTurn(question) {
+  const turn = el("div", "turn");
+  turn.appendChild(el("div", "bubble-user", question));
+
+  const activity = el("section", "activity");
+  const head = el("div", "activity-head");
+  head.appendChild(el("h2", null, "What the agent is doing"));
+  const toggle = el("button", "linkish", "hide");
+  toggle.type = "button";
+  head.appendChild(toggle);
+  activity.appendChild(head);
+
+  const log = el("ol", "activity-log");
+  activity.appendChild(log);
+  toggle.addEventListener("click", () => {
+    const hidden = log.hasAttribute("hidden");
+    log.toggleAttribute("hidden", !hidden);
+    toggle.textContent = hidden ? "hide" : "show";
+  });
+
+  const progressWrap = el("div", "progress-wrap");
+  progressWrap.hidden = true;
+  const bar = el("div", "progress-bar");
+  const fill = el("div", "progress-fill");
+  bar.appendChild(fill);
+  const progressLabel = el("span", "progress-label");
+  progressWrap.append(bar, progressLabel);
+  activity.appendChild(progressWrap);
+
+  const answer = el("section", "answer");
+  answer.hidden = true;
+  const results = el("section", "results");
+  const calendar = el("section", "calendar-section");
+  calendar.hidden = true;
+
+  turn.append(activity, answer, results, calendar);
+  transcriptEl.appendChild(turn);
+  turn.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  return { turn, log, progressWrap, fill, progressLabel, answer, results, calendar,
+           answerText: [] };
+}
+
+function logLine(ui, text, kind) {
+  ui.log.appendChild(el("li", kind, text));
+}
+
+/* --------------------------------------------------------------- rendering */
+
+function renderDeals(ui, result) {
+  ui.results.replaceChildren();
+  (result.deals || []).forEach((deal) => {
+    const isBest = deal.rank === 1;
+    const card = el("article", `deal${isBest ? " best" : ""}`);
+    card.appendChild(el("div", "deal-rank", `#${deal.rank}`));
+
+    const middle = el("div");
+    const route = el("div", "deal-route");
+    route.append(`${deal.origin} → ${deal.destination}`);
+    if (isBest) route.appendChild(el("span", "badge", "Best"));
+    if (deal.refine_note) route.appendChild(el("span", "badge warn", "estimate"));
+    middle.appendChild(route);
+
+    const dates = deal.return_date
+      ? `${shortDate(deal.departure_date)} → ${shortDate(deal.return_date)}${
+          deal.trip_days ? ` · ${deal.trip_days} days` : ""}`
+      : shortDate(deal.departure_date);
+    middle.appendChild(el("div", "deal-dates", dates));
+
+    if (deal.itinerary) {
+      middle.appendChild(el("div", "deal-flights", deal.itinerary.slices
+        .map((s) => s.legs.map((l) => `${l.airline_code}${l.flight_number}`).join(" "))
+        .join(" / ")));
+    }
+    card.appendChild(middle);
+
+    const price = el("div", "deal-price", money(deal.grid_price, deal.currency));
+    if (deal.savings_vs_median > 0) {
+      price.appendChild(el("span", "deal-save",
+        `${money(deal.savings_vs_median, deal.currency)} under median`));
+    }
+    card.appendChild(price);
+    ui.results.appendChild(card);
+  });
+}
+
+function renderCalendar(ui, result) {
   const cells = result.calendar || [];
-  if (cells.length < 2) {
-    calendarSection.hidden = true;
-    chartPoints = [];
-    return;
-  }
+  if (cells.length < 2) return;
+
   const byDate = new Map();
   cells.forEach((cell) => {
     const existing = byDate.get(cell.departure_date);
     if (!existing || cell.price < existing.price) byDate.set(cell.departure_date, cell);
   });
-  chartPoints = [...byDate.values()].sort((a, b) =>
-    a.departure_date < b.departure_date ? -1 : 1
-  );
+  const points = [...byDate.values()].sort((a, b) =>
+    a.departure_date < b.departure_date ? -1 : 1);
 
-  const prices = chartPoints.map((p) => p.price);
-  const currency = chartPoints[0].currency;
-  $("calendar-caption").textContent =
-    `Cheapest fare per departure date across ${chartPoints.length} dates. ` +
-    `${money(Math.min(...prices), currency)} to ${money(Math.max(...prices), currency)}.`;
-  calendarSection.hidden = false;
-  drawChart();
+  const prices = points.map((p) => p.price);
+  const currency = points[0].currency;
+
+  ui.calendar.replaceChildren();
+  ui.calendar.appendChild(el("h2", null, "Price calendar"));
+  ui.calendar.appendChild(el("p", "muted",
+    `Cheapest fare per departure date across ${points.length} dates. ` +
+    `${money(Math.min(...prices), currency)} to ${money(Math.max(...prices), currency)}.`));
+
+  const wrap = el("div", "chart-wrap");
+  const chart = document.createElementNS(SVG_NS, "svg");
+  chart.setAttribute("class", "chart");
+  chart.setAttribute("role", "img");
+  chart.setAttribute("aria-label", "Cheapest fare by departure date");
+  const tip = el("div", "chart-tip");
+  tip.hidden = true;
+  wrap.append(chart, tip);
+  ui.calendar.appendChild(wrap);
+  ui.calendar.hidden = false;
+
+  charts.push({ svg: chart, points, tip });
+  drawChart(chart, points, tip);
 }
 
-let resizeTimer = null;
-window.addEventListener("resize", () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(drawChart, 150);
-});
-
-function renderResults(kind, data) {
+function renderResults(ui, kind, data) {
   if (kind === "deal_search") {
-    renderDeals(data);
-    renderCalendar(data);
-  } else if (kind === "point_search" && !resultsEl.childElementCount) {
-    resultsEl.replaceChildren();
+    renderDeals(ui, data);
+    renderCalendar(ui, data);
+    const stats = data.stats || {};
+    if (stats.cache_hits) {
+      logLine(ui, `${stats.cache_hits} of ${stats.cache_hits + stats.requests_made} ` +
+        `scans served from cache`, "cache");
+    }
+  } else if (kind === "point_search" && !ui.results.childElementCount) {
     (data.itineraries || []).slice(0, 8).forEach((itinerary, index) => {
       const card = el("article", `deal${index === 0 ? " best" : ""}`);
       card.appendChild(el("div", "deal-rank", `#${index + 1}`));
       const middle = el("div");
       const slice = itinerary.slices[0];
       middle.appendChild(el("div", "deal-route", `${slice.origin} → ${slice.destination}`));
-      middle.appendChild(
-        el("div", "deal-dates", `${shortDate(slice.departure.slice(0, 10))} · ${itinerary.max_stops} stop(s)`)
-      );
-      middle.appendChild(
-        el("div", "deal-flights", itinerary.slices
-          .map((s) => s.legs.map((l) => `${l.airline_code}${l.flight_number}`).join(" "))
-          .join(" / "))
-      );
+      middle.appendChild(el("div", "deal-dates",
+        `${shortDate(slice.departure.slice(0, 10))} · ${itinerary.max_stops} stop(s)`));
+      middle.appendChild(el("div", "deal-flights", itinerary.slices
+        .map((s) => s.legs.map((l) => `${l.airline_code}${l.flight_number}`).join(" "))
+        .join(" / ")));
       card.appendChild(middle);
       card.appendChild(el("div", "deal-price", itinerary.price_display));
-      resultsEl.appendChild(card);
+      ui.results.appendChild(card);
     });
   }
 }
 
-/* ----------------------------------------------------------------- stream */
-
-function handleEvent(event, state) {
+function handleEvent(ui, event) {
   switch (event.type) {
     case "thinking":
-      logLine(event.text.split("\n")[0].slice(0, 160), "think");
+      logLine(ui, event.text.split("\n")[0].slice(0, 160), "think");
       break;
     case "tool_call": {
       const label = TOOL_LABELS[event.name];
-      logLine(label ? label(event.input || {}) : `Calling ${event.name}`, "tool");
+      logLine(ui, label ? label(event.input || {}) : `Calling ${event.name}`, "tool");
       break;
     }
     case "plan":
-      logLine(
-        `Plan: ~${event.estimated_requests} requests across ${event.destinations.length} destination(s)`
-      );
+      logLine(ui, `Plan: ~${event.estimated_requests} requests across ` +
+        `${event.destinations.length} destination(s)`);
       break;
     case "progress": {
-      const wrap = $("progress-wrap");
-      wrap.hidden = false;
+      ui.progressWrap.hidden = false;
       const pct = event.total ? Math.round((100 * event.done) / event.total) : 0;
-      $("progress-fill").style.width = `${pct}%`;
-      $("progress-label").textContent =
-        `${event.stage === "scan" ? "scanning dates" : "pricing best options"} ${event.done}/${event.total}`;
+      ui.fill.style.width = `${pct}%`;
+      ui.progressLabel.textContent =
+        `${event.stage === "scan" ? "scanning dates" : "pricing best options"} ` +
+        `${event.done}/${event.total}`;
       break;
     }
     case "text":
-      state.answer.push(event.text);
-      answerEl.hidden = false;
-      answerEl.replaceChildren(
-        ...state.answer.join("\n\n").split(/\n\n+/).map((p) => el("p", null, p))
+      ui.answerText.push(event.text);
+      ui.answer.hidden = false;
+      ui.answer.replaceChildren(
+        ...ui.answerText.join("\n\n").split(/\n\n+/).map((p) => el("p", null, p))
       );
       break;
     case "results":
-      renderResults(event.kind, event.data);
+      renderResults(ui, event.kind, event.data);
       break;
     case "error":
-      logLine(event.message, "err");
-      state.error = event.message;
+      logLine(ui, event.message, "err");
+      ui.error = event.message;
       break;
     default:
       break;
   }
 }
+
+/* ------------------------------------------------------------------ submit */
 
 form.addEventListener("submit", async (submitEvent) => {
   submitEvent.preventDefault();
@@ -379,22 +419,19 @@ form.addEventListener("submit", async (submitEvent) => {
 
   askButton.disabled = true;
   askButton.textContent = "Searching…";
-  logEl.replaceChildren();
-  answerEl.hidden = true;
-  answerEl.replaceChildren();
-  resultsEl.replaceChildren();
-  calendarSection.hidden = true;
-  $("progress-wrap").hidden = true;
-  activityEl.hidden = false;
-  document.querySelector(".notice")?.remove();
+  questionEl.value = "";
+  $("examples").hidden = true;
+  resetButton.hidden = false;
 
-  const state = { answer: [], error: null };
+  const ui = newTurn(question);
 
   try {
     const res = await fetch("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      // Text-only history: the assistant's summary carries the facts, and
+      // replaying tool calls would tie the payload to one provider's shape.
+      body: JSON.stringify({ question, history: [...history] }),
     });
     if (!res.ok || !res.body) throw new Error(`server returned ${res.status}`);
 
@@ -413,22 +450,28 @@ form.addEventListener("submit", async (submitEvent) => {
         const line = frame.split("\n").find((l) => l.startsWith("data: "));
         if (!line) continue;
         try {
-          handleEvent(JSON.parse(line.slice(6)), state);
+          handleEvent(ui, JSON.parse(line.slice(6)));
         } catch {
           /* ignore a malformed frame rather than killing the stream */
         }
       }
     }
-    $("progress-wrap").hidden = true;
+    ui.progressWrap.hidden = true;
 
-    if (state.error && !state.answer.length) {
-      const notice = el("div", "notice", state.error);
-      activityEl.after(notice);
+    const answer = ui.answerText.join("\n\n").trim();
+    if (answer) {
+      history.push({ role: "user", content: question });
+      history.push({ role: "assistant", content: answer });
+    } else if (ui.error) {
+      ui.answer.hidden = false;
+      ui.answer.replaceChildren(el("p", null, ui.error));
     }
   } catch (err) {
-    activityEl.after(el("div", "notice", `Could not reach the agent: ${err.message}`));
+    ui.answer.hidden = false;
+    ui.answer.replaceChildren(el("p", null, `Could not reach the agent: ${err.message}`));
   } finally {
     askButton.disabled = false;
-    askButton.textContent = "Search";
+    askButton.textContent = "Send";
+    questionEl.focus();
   }
 });

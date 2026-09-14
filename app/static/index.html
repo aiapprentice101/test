@@ -11,20 +11,12 @@
   <header class="topbar">
     <div class="topbar-inner">
       <h1>✈︎ Flight Agent</h1>
-      <p class="tagline">Ask in plain English. It plans the search, runs it, and reports back.</p>
+      <p class="tagline">Ask in plain English, then refine. It remembers the conversation.</p>
     </div>
   </header>
 
   <main>
-    <form id="ask-form" class="card ask-card" autocomplete="off">
-      <label for="question" class="sr-only">Your flight question</label>
-      <textarea id="question" name="question" rows="3" required
-        placeholder="Singapore Airlines, Singapore to the USA, round trip. Leave in Dec 2026, back in Jan 2027, 30-day trip, business class. Find me the best rate and which dates."></textarea>
-      <div class="ask-actions">
-        <span id="agent-status" class="agent-status"></span>
-        <button type="submit" class="primary" id="ask-button">Search</button>
-      </div>
-    </form>
+    <div id="transcript" class="transcript"></div>
 
     <div class="examples" id="examples">
       <span>Try:</span>
@@ -33,28 +25,19 @@
       <button type="button" data-q="I want to go somewhere in Europe from Singapore for 2 weeks in May 2027. Economy. Where is cheapest?">Anywhere in Europe</button>
     </div>
 
-    <section id="activity" class="activity" hidden>
-      <div class="activity-head">
-        <h2>What the agent is doing</h2>
-        <button type="button" id="toggle-activity" class="linkish">hide</button>
+    <form id="ask-form" class="card ask-card" autocomplete="off">
+      <label for="question" class="sr-only">Your flight question</label>
+      <textarea id="question" name="question" rows="3" required
+        placeholder="Ask about flights — then follow up with &quot;what about January instead?&quot;"></textarea>
+      <div class="ask-actions">
+        <span id="agent-status" class="agent-status"></span>
+        <div class="action-buttons">
+          <button type="button" id="reset" class="secondary" hidden>New search</button>
+          <button type="submit" class="primary" id="ask-button">Send</button>
+        </div>
       </div>
-      <ol id="activity-log" class="activity-log"></ol>
-      <div id="progress-wrap" class="progress-wrap" hidden>
-        <div class="progress-bar"><div id="progress-fill"></div></div>
-        <span id="progress-label" class="progress-label"></span>
-      </div>
-    </section>
+    </form>
 
-    <section id="answer" class="answer card" hidden></section>
-    <section id="results" class="results"></section>
-    <section id="calendar-section" class="card calendar-section" hidden>
-      <h2>Price calendar</h2>
-      <p class="muted" id="calendar-caption"></p>
-      <div id="chart-wrap" class="chart-wrap">
-        <svg id="chart" role="img" aria-label="Cheapest fare by departure date"></svg>
-        <div id="chart-tip" class="chart-tip" hidden></div>
-      </div>
-    </section>
   </main>
 
   <script src="/static/app.js"></script>
